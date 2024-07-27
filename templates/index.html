@@ -1,0 +1,332 @@
+<!-- Game of Life - Felipe Villegas -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Conway's Game of Life</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="main-container">
+        <div class="container">
+            <h1>Conway's Game of Life</h1>
+            <h3>ISYE 6644 - Felipe Villegas</h3>
+            <table id="grid"></table>
+            <div id="message" class="message"></div>
+            <div class="button-container">
+                <button id="playPauseButton" class="play-button" onclick="togglePlay()">Play</button>
+                <button id="speedButton" onclick="toggleSpeed()">1x</button>
+                <button onclick="clearGrid()">Clear Grid</button>
+                <button id="RandomButton" class="random-button" onclick="randomizeGrid()">Random Restart</button>
+            </div>
+        </div>
+        <div class="metrics-container">
+            <div class="live-metrics-container">
+                <h2>Live Metrics</h2>
+                <li id="generationCount">Generation Count: 0</li>
+                <li id="aliveCellsCount">Alive Cells: 0</li>
+                <li id="deadCellsCount">Dead Cells: 0</li>
+                <li id="populationDensity">Density: 0%</li>
+                <li id="growthRate">Growth Rate: <span id="growthRateValue">0%</span></li>
+            </div>
+            <div class="session-metrics-container">
+                <h2>Summary Metrics</h2>
+                <li id="runCount">Runs: 0</li>
+                <li id="longestRun">Longest Run: 0</li>
+                <li id="shortestValidRun">Shortest Run: ∞</li>
+                <li id="averageGenerationCount">Avg Generations: 0</li>
+                <!-- <li id="avgAliveCells">Avg Alive Cells: 0</li> -->
+                <li id="avgPopulationDensity">Avg Population Density: 0%</li>
+            </div>
+            <div class="end-condition-container">
+                <h2>End-Condition</h2>
+                <li id="terminationCount">Termination: 0</li>
+                <li id="stillLifeCount">Still Life: 0</li>
+                <li id="oscillatorCount">Oscillator: 0</li>
+            </div>
+            <div class="rules-container">
+                <h2>Rules</h2>
+                <li>Any live cell with fewer than 2 live neighbours dies.</li>
+                <li>Any live cell with 2 or 3 live neighbours remains alive.</li>
+                <li>Any live cell with more than 3 live neighbours dies.</li>
+                <li>Any dead cell with exactly 3 live neighbours becomes a live cell.</li>
+            </div>
+        </div>
+    </div>
+    <script>
+        const gridElement = document.getElementById('grid');
+        const playPauseButton = document.getElementById('playPauseButton');
+        const speedButton = document.getElementById('speedButton');
+        const messageElement = document.getElementById('message');
+        const generationCountElement = document.getElementById('generationCount');
+        const populationDensityElement = document.getElementById('populationDensity');
+        const aliveCellsCountElement = document.getElementById('aliveCellsCount');
+        const deadCellsCountElement = document.getElementById('deadCellsCount');
+        const growthRateElement = document.getElementById('growthRateValue');
+        const runCountElement = document.getElementById('runCount');
+        const averageGenerationCountElement = document.getElementById('averageGenerationCount');
+        
+        let grid = [];
+        let previousGrid = [];
+        let isPlaying = false;
+        let intervalId;
+        let isMouseDown = false;
+        let speed = 1;
+        let generationCount = 0;
+        let endConditionMet = false;
+        let previousAliveCells = 0;
+        let totalGenerations = 0;
+        let validRuns = 0;
+        let averageGenerationCount = 0;
+        let totalAliveCells = 0;
+        let totalPopulationDensity = 0;
+        let stepCount = 0;
+        let longestRun = 0;
+        let shortestValidRun = Infinity;
+        let terminationCount = 0;
+        let stillLifeCount = 0;
+        let oscillatorCount = 0;
+    
+        function renderGrid() {
+            gridElement.innerHTML = '';
+            for (let row = 0; row < grid.length; row++) {
+                const tr = document.createElement('tr');
+                for (let col = 0; col < grid[row].length; col++) {
+                    const td = document.createElement('td');
+                    td.className = grid[row][col] ? 'alive' : 'dead';
+                    td.onmousedown = () => {
+                        isMouseDown = true;
+                        if (grid[row][col] === 0) {
+                            toggleCell(row, col, true); // Toggle cells alive
+                        }
+                    };
+                    td.onmouseup = () => {
+                        isMouseDown = false;
+                    };
+                    td.onmouseover = () => {
+                        if (isMouseDown && grid[row][col] === 0) {
+                            toggleCell(row, col, true);
+                        }
+                    };
+                    tr.appendChild(td);
+                }
+                gridElement.appendChild(tr);
+            }
+        }
+    
+        function toggleCell(row, col, turnOn = false) {
+            fetch('/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ row, col, turnOn })
+            })
+            .then(response => response.json())
+            .then(() => {
+                if (turnOn) {
+                    grid[row][col] = 1;
+                }
+                renderGrid();
+                updateMetrics();
+            });
+        }
+    
+        function step() {
+            fetch('/step', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                previousGrid = JSON.parse(JSON.stringify(grid)); // Copy last step
+                grid = data.grid;
+
+                // Update variables for current state
+                const aliveCells = grid.flat().filter(cell => cell === 1).length;
+                const totalCells = grid.length * grid[0].length;
+                const populationDensity = (aliveCells / totalCells) * 100;
+                //Add for session statistics
+                totalAliveCells += aliveCells;
+                totalPopulationDensity += populationDensity;
+                stepCount++;
+
+                if (data.end_condition) {
+                    messageElement.textContent = data.end_condition;
+                    endConditionMet = true;
+
+                    // Update session metrics if run counts (it counts if generation greater than 7 to avoid starting in an end-condition)
+                    if (stepCount >= 7) {
+                        updateSessionMetrics();
+
+                        // Pause
+                        clearInterval(intervalId);
+                        playPauseButton.textContent = "Play";
+                        playPauseButton.classList.remove('pause-button');
+                        playPauseButton.classList.add('play-button');
+                        isPlaying = false;
+                    } 
+                    // Reset for the next run
+                    totalAliveCells = 0;
+                    totalPopulationDensity = 0;
+                    stepCount = 0;
+                    
+                } else {
+                    if (!endConditionMet) {
+                        generationCount++;
+                        generationCountElement.textContent = `Generation Count: ${generationCount}`;
+                    }
+                }
+                renderGrid();
+                updateMetrics(); // Update metrics after each step
+            });
+        }
+    
+        function initializeGrid() {
+            fetch('/initialize')
+                .then(response => response.json())
+                .then(data => {
+                    grid = data;
+                    generationCount = 0;
+                    endConditionMet = false;
+                    generationCountElement.textContent = `Generation Count: ${generationCount}`;
+                    renderGrid();
+                    updateMetrics();
+                });
+        }
+    
+        function clearGrid() {
+            fetch('/clear', { //method from app.py
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(() => {
+                initializeGrid(); //Reset grid
+                messageElement.textContent = '';
+                if (isPlaying) {
+                    clearInterval(intervalId); 
+                    playPauseButton.textContent = "Play"; // Pause the game is Clear button is pressed
+                    playPauseButton.classList.remove('pause-button');
+                    playPauseButton.classList.add('play-button');
+                    isPlaying = false;
+                }
+            });
+        }
+    
+        function randomizeGrid() {
+            fetch('/randomize', { //method from app.py
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(() => {
+                initializeGrid(); //Same steps as clearGrid function
+                messageElement.textContent = '';
+                if (isPlaying) {
+                    clearInterval(intervalId);
+                    playPauseButton.textContent = "Play";
+                    playPauseButton.classList.remove('pause-button');
+                    playPauseButton.classList.add('play-button');
+                    isPlaying = false;
+                }
+            });
+        }
+    
+        function togglePlay() {
+            if (isPlaying) {
+                clearInterval(intervalId);
+                playPauseButton.textContent = "Play";
+                playPauseButton.classList.remove('pause-button');
+                playPauseButton.classList.add('play-button');
+            } else {
+                intervalId = setInterval(step, 400 / speed);
+                playPauseButton.textContent = "Pause";
+                playPauseButton.classList.remove('play-button');
+                playPauseButton.classList.add('pause-button');
+            }
+            isPlaying = !isPlaying;
+        }
+    
+        function toggleSpeed() { //changes value for speed depending on current state
+            if (speed === 1) {
+                speed = 2;
+                speedButton.textContent = "2x";
+            } else if (speed === 2) {
+                speed = 4;
+                speedButton.textContent = "4x";
+            } else if (speed === 4) {
+                speed = 8;
+                speedButton.textContent = "8x";
+            } else if (speed === 8) {
+                speed = 16;
+                speedButton.textContent = "16x";
+            } else {
+                speed = 1;
+                speedButton.textContent = "1x";
+            }
+            if (isPlaying) {
+                clearInterval(intervalId);
+                intervalId = setInterval(step, 400 / speed);
+            }
+        }
+    
+        function updateMetrics() {
+            const totalCells = grid.length * grid[0].length;
+            const aliveCells = grid.flat().filter(cell => cell === 1).length;
+            const deadCells = totalCells - aliveCells;
+            const populationDensity = (aliveCells / totalCells) * 100;
+            let growthRate = ((aliveCells - previousAliveCells) / previousAliveCells) * 100;
+    
+            if (previousAliveCells === 0 && aliveCells > 0) {
+                growthRate = 100;
+            }
+    
+            populationDensityElement.textContent = `Density: ${populationDensity.toFixed(0)}%`;
+            aliveCellsCountElement.textContent = `Alive Cells: ${aliveCells}`;
+            deadCellsCountElement.textContent = `Dead Cells: ${deadCells}`;
+    
+            const growthRateText = `${Math.abs(growthRate.toFixed(0))}%`;
+            growthRateElement.textContent = growthRate >= 0 ? growthRateText : growthRateText;
+            growthRateElement.style.color = growthRate >= 0 ? 'rgb(100, 200, 100)' : 'rgb(200, 100, 100)'; //green for >=0, red otherwise
+    
+            previousAliveCells = aliveCells;
+        }
+        
+        function updateSessionMetrics() {
+            if (generationCount >= 7) {
+                totalGenerations += generationCount;
+                validRuns += 1;
+                averageGenerationCount = (totalGenerations / validRuns).toFixed(0); //no decimal places for cleaner look
+
+                //Calculate longest and shortest run
+                if (generationCount > longestRun) {
+                    longestRun = generationCount;
+                }
+                if (generationCount < shortestValidRun) {
+                    shortestValidRun = generationCount;
+                } 
+
+                // Calculate averages for the session metrics
+                runCountElement.textContent = `Runs: ${validRuns}`;
+                averageGenerationCountElement.textContent = `Avg Generations: ${averageGenerationCount}`;
+                document.getElementById('longestRun').textContent = `Longest Run: ${longestRun}`;
+                document.getElementById('shortestValidRun').textContent = `Shortest Run: ${shortestValidRun}`;
+                // document.getElementById('avgAliveCells').textContent = `Avg Alive Cells: ${(totalAliveCells / stepCount).toFixed(0)}`;
+                document.getElementById('avgPopulationDensity').textContent = `Avg Population Density: ${(totalPopulationDensity / stepCount).toFixed(0)}%`;
+                
+                // Update end condition counts
+                if (messageElement.textContent.includes("Termination")) {
+                    terminationCount++;
+                    document.getElementById('terminationCount').textContent = `Termination: ${terminationCount}`;
+                } else if (messageElement.textContent.includes("Still Life")) {
+                    stillLifeCount++;
+                    document.getElementById('stillLifeCount').textContent = `Still Life: ${stillLifeCount}`;
+                } else if (messageElement.textContent.includes("Oscillator")) {
+                    oscillatorCount++;
+                    document.getElementById('oscillatorCount').textContent = `Oscillator: ${oscillatorCount}`;
+                }
+            }
+        }
+    
+        initializeGrid();
+    </script>
+</body>
+</html>
