@@ -2,6 +2,9 @@
 
 This project is an implementation of Conway's Game of Life using Python and Flask for the backend, and HTML, CSS, and JavaScript for the frontend. The game includes additional features such as live metrics and session metrics to track the game's progress.
 
+## Preview
+![Game of Life Snippet](./images/game-of-life-snippet.png)
+
 ## Project Structure
 
 ### Files and Directories
